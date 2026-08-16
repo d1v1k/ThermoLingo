@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NL-to-Simulation Compiler</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8e9ec;
+    --muted: #9aa0ab;
+    --accent: #ff7a45;
+    --accent-dim: #7a3d24;
+    --mono: 'SF Mono', 'Fira Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 32px 20px 80px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  header { margin-bottom: 28px; }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  header p { color: var(--muted); margin: 0; font-size: 14px; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 12px;
+    resize: vertical;
+    font-family: inherit;
+  }
+  textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+  .examples { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .example-chip {
+    font-size: 12px;
+    color: var(--muted);
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .example-chip:hover { border-color: var(--accent); color: var(--text); }
+
+  button {
+    margin-top: 14px;
+    background: var(--accent);
+    color: #1a0e08;
+    border: none;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:disabled { background: var(--accent-dim); cursor: not-allowed; color: #c9a08c; }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+
+  .section-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+
+  #status { font-size: 13px; color: var(--muted); margin-top: 10px; min-height: 18px; }
+  #status.error { color: #ff6b6b; }
+
+  pre#specPreview {
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #9ecbff;
+    overflow-x: auto;
+    margin: 0;
+  }
+
+  #chart { width: 100%; height: 420px; }
+
+  #explanation {
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .hidden { display: none; }
+
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    background: var(--accent-dim);
+    color: #ffcbb0;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+    font-weight: 600;
+  }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 30px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>NL &rarr; Simulation Compiler</h1>
+    <p>Describe a 1D heat conduction problem in plain English. An LLM parses it into a physics spec, a finite-difference solver runs it, and a second LLM call explains the result &mdash; grounded in the actual computed numbers.</p>
+  </header>
+
+  <div class="panel">
+    <p class="section-title">Describe the system</p>
+    <textarea id="promptInput" placeholder="e.g. A 1 meter copper rod starts at 20°C. One end is heated to 100°C, the other end is held at 0°C. Simulate for 60 seconds."></textarea>
+    <div class="examples">
+      <span class="example-chip" data-text="A 1 meter copper rod starts at 20°C. One end is heated to 100°C, the other end is held at 0°C. Simulate for 60 seconds.">copper rod, 60s</span>
+      <span class="example-chip" data-text="A 2 meter wooden beam at a uniform 15°C, both ends suddenly clamped to 200°C. Simulate for 500 seconds.">wooden beam, 500s</span>
+      <span class="example-chip" data-text="A short 0.3 meter steel rod, one end frozen at -10°C, the other end at 80°C, starting uniform at 30°C. Run for 20 seconds.">steel rod, 20s</span>
+    </div>
+    <button id="runBtn">Run Simulation</button>
+    <div id="status"></div>
+  </div>
+
+  <div id="results" class="hidden">
+
+    <div class="panel">
+      <p class="section-title">Parsed Spec <span class="badge">LLM call 1</span></p>
+      <pre id="specPreview"></pre>
+    </div>
+
+    <div class="panel">
+      <p class="section-title">Temperature Along the Rod Over Time</p>
+      <div id="chart"></div>
+    </div>
+
+    <div class="panel">
+      <p class="section-title">Explanation <span class="badge">LLM call 2</span></p>
+      <div id="explanation"></div>
+    </div>
+
+  </div>
+
+  <footer>Computational Research Track &middot; FastAPI + OpenAI + NumPy finite-difference solver</footer>
+</div>
+
+<script>
+const promptInput = document.getElementById('promptInput');
+const runBtn = document.getElementById('runBtn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const specPreview = document.getElementById('specPreview');
+const explanationEl = document.getElementById('explanation');
+
+document.querySelectorAll('.example-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    promptInput.value = chip.dataset.text;
+  });
+});
+
+runBtn.addEventListener('click', runSimulation);
+
+async function runSimulation() {
+  const prompt = promptInput.value.trim();
+  if (!prompt) {
+    setStatus('Enter a description first.', true);
+    return;
+  }
+
+  runBtn.disabled = true;
+  resultsEl.classList.add('hidden');
+  setStatus('Parsing prompt with LLM…');
+
+  try {
+    const res = await fetch('/api/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Request failed with status ${res.status}`);
+    }
+
+    setStatus('Solving finite-difference heat equation…');
+    const data = await res.json();
+
+    renderResults(data);
+    setStatus(`Done — ${data.times.length} time snapshots computed.`);
+  } catch (e) {
+    setStatus(`Error: ${e.message}`, true);
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('error', isError);
+}
+
+function renderResults(data) {
+  resultsEl.classList.remove('hidden');
+
+  specPreview.textContent = JSON.stringify(data.spec, null, 2);
+  explanationEl.textContent = data.explanation;
+
+  const traces = data.temperature_grid.map((profile, i) => ({
+    x: data.x_grid,
+    y: profile,
+    mode: 'lines',
+    name: `t = ${data.times[i]}s`,
+    line: {
+      color: `rgba(255, 122, 69, ${0.15 + 0.85 * (i / (data.temperature_grid.length - 1))})`,
+      width: i === data.temperature_grid.length - 1 ? 3 : 1
+    },
+    showlegend: false
+  }));
+
+  const layout = {
+    paper_bgcolor: '#171a21',
+    plot_bgcolor: '#0d0f14',
+    font: { color: '#e8e9ec', family: 'inherit' },
+    margin: { l: 50, r: 20, t: 10, b: 45 },
+    xaxis: { title: 'Position along rod (m)', gridcolor: '#2a2e38' },
+    yaxis: { title: 'Temperature (°C)', gridcolor: '#2a2e38' }
+  };
+
+  Plotly.newPlot('chart', traces, layout, { displayModeBar: false, responsive: true });
+}
+</script>
+</body>
+</html>
